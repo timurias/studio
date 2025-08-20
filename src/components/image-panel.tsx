@@ -1,7 +1,8 @@
+
 "use client";
 
 import type { Point } from "@/lib/homography";
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import Image from "next/image";
 
@@ -13,23 +14,89 @@ type ImagePanelProps = {
   isNext: boolean;
 };
 
+const LOUPE_SIZE = 120; // Size of the zoom loupe in pixels
+const ZOOM_FACTOR = 3; // How much to zoom in
+
 export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, isNext }: ImagePanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
+  const [displaySize, setDisplaySize] = useState<{ width: number, height: number, top: number, left: number }>({ width: 0, height: 0, top: 0, left: 0 });
+
+  useEffect(() => {
+    const calculateDisplaySize = () => {
+      if (!dimensions || !containerRef.current) return;
+      
+      const containerWidth = containerRef.current.clientWidth;
+      const containerHeight = containerRef.current.clientHeight;
+      const imageAspectRatio = dimensions.width / dimensions.height;
+      const containerAspectRatio = containerWidth / containerHeight;
+
+      let width, height, top = 0, left = 0;
+      if (imageAspectRatio > containerAspectRatio) {
+        width = containerWidth;
+        height = containerWidth / imageAspectRatio;
+        top = (containerHeight - height) / 2;
+      } else {
+        height = containerHeight;
+        width = containerHeight * imageAspectRatio;
+        left = (containerWidth - width) / 2;
+      }
+      setDisplaySize({ width, height, top, left });
+    };
+
+    calculateDisplaySize();
+    window.addEventListener('resize', calculateDisplaySize);
+    return () => window.removeEventListener('resize', calculateDisplaySize);
+
+  }, [dimensions]);
+
+  const getPointPosition = (point: Point) => {
+    if (!dimensions) return { left: 0, top: 0 };
+    const left = (point.x / dimensions.width) * displaySize.width + displaySize.left;
+    const top = (point.y / dimensions.height) * displaySize.height + displaySize.top;
+    return { left, top };
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Check if mouse is within the actual image bounds
+    if (x >= displaySize.left && x <= displaySize.left + displaySize.width &&
+        y >= displaySize.top && y <= displaySize.top + displaySize.height) {
+      setMousePos({ x, y });
+    } else {
+      setMousePos(null);
+    }
+  };
+  
+  const handleMouseLeave = () => {
+    setMousePos(null);
+  };
 
   const handleContainerClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!dimensions || !containerRef.current) return;
     
     const rect = containerRef.current.getBoundingClientRect();
-    const displayWidth = rect.width;
-    const displayHeight = rect.height;
-    
     // Get click position relative to the container
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
+    // Check if the click is within the scaled image bounds
+    if (x < displaySize.left || x > displaySize.left + displaySize.width ||
+        y < displaySize.top || y > displaySize.top + displaySize.height) {
+      return; // Click was outside the image
+    }
+
+    // Scale click position relative to the image, not the container
+    const imageX = x - displaySize.left;
+    const imageY = y - displaySize.top;
+
     // Scale click position to original image dimensions
-    const originalX = (x / displayWidth) * dimensions.width;
-    const originalY = (y / displayHeight) * dimensions.height;
+    const originalX = (imageX / displaySize.width) * dimensions.width;
+    const originalY = (imageY / displaySize.height) * dimensions.height;
 
     onPointAdd({ x: originalX, y: originalY });
   };
@@ -43,36 +110,19 @@ export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, i
         !imageUrl && "flex items-center justify-center"
       )}
       onClick={handleContainerClick}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
     >
       {imageUrl ? (
-        <Image src={imageUrl} alt="Uploaded image" layout="fill" objectFit="contain" />
+        <Image ref={imageRef} src={imageUrl} alt="Uploaded image" layout="fill" objectFit="contain" />
       ) : (
         <p className="text-muted-foreground">Upload an image to begin</p>
       )}
 
       {imageUrl && points.map((point, index) => {
-        if (!dimensions || !containerRef.current) return null;
+        if (!dimensions) return null;
         
-        const displayWidth = containerRef.current.clientWidth;
-        const displayHeight = containerRef.current.clientHeight;
-
-        const imageAspectRatio = dimensions.width / dimensions.height;
-        const containerAspectRatio = displayWidth / displayHeight;
-
-        let scale: number;
-        let offsetX = 0;
-        let offsetY = 0;
-
-        if (imageAspectRatio > containerAspectRatio) {
-            scale = displayWidth / dimensions.width;
-            offsetY = (displayHeight - dimensions.height * scale) / 2;
-        } else {
-            scale = displayHeight / dimensions.height;
-            offsetX = (displayWidth - dimensions.width * scale) / 2;
-        }
-
-        const left = point.x * scale + offsetX;
-        const top = point.y * scale + offsetY;
+        const { left, top } = getPointPosition(point);
         
         return (
             <div
@@ -94,6 +144,38 @@ export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, i
             </div>
         );
       })}
+
+      {mousePos && imageUrl && dimensions && (
+        <div
+          className="absolute pointer-events-none rounded-full border-2 border-primary bg-background shadow-lg"
+          style={{
+            left: `${mousePos.x - LOUPE_SIZE / 2}px`,
+            top: `${mousePos.y - LOUPE_SIZE / 2}px`,
+            width: `${LOUPE_SIZE}px`,
+            height: `${LOUPE_SIZE}px`,
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              position: 'relative',
+              width: `${displaySize.width * ZOOM_FACTOR}px`,
+              height: `${displaySize.height * ZOOM_FACTOR}px`,
+              left: `${-(mousePos.x - displaySize.left) * ZOOM_FACTOR + LOUPE_SIZE / 2}px`,
+              top: `${-(mousePos.y - displaySize.top) * ZOOM_FACTOR + LOUPE_SIZE / 2}px`,
+            }}
+          >
+            <Image src={imageUrl} alt="Zoomed view" layout="fill" objectFit="contain" />
+          </div>
+          {/* Crosshair in the middle of the loupe */}
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-full">
+              <div className="absolute top-1/2 left-0 w-full h-[1px] bg-primary/50 -translate-y-1/2"></div>
+              <div className="absolute left-1/2 top-0 h-full w-[1px] bg-primary/50 -translate-x-1/2"></div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+    

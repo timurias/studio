@@ -2,7 +2,7 @@
 "use client";
 
 import type { Point } from "@/lib/homography";
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import Image from "next/image";
 
@@ -19,79 +19,52 @@ const ZOOM_FACTOR = 3; // How much to zoom in
 
 export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, isNext }: ImagePanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const imageRef = useRef<HTMLImageElement>(null);
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
   const [displaySize, setDisplaySize] = useState<{ width: number, height: number, top: number, left: number }>({ width: 0, height: 0, top: 0, left: 0 });
 
+  const calculateDisplaySize = useCallback(() => {
+    const container = containerRef.current;
+    if (!container || !dimensions) {
+      setDisplaySize({ width: 0, height: 0, top: 0, left: 0 });
+      return;
+    }
+
+    const { width: containerWidth, height: containerHeight } = container.getBoundingClientRect();
+    const { width: naturalWidth, height: naturalHeight } = dimensions;
+
+    if (containerWidth === 0 || containerHeight === 0 || naturalWidth === 0 || naturalHeight === 0) {
+      return;
+    }
+
+    const imageAspectRatio = naturalWidth / naturalHeight;
+    const containerAspectRatio = containerWidth / containerHeight;
+
+    let width, height, top = 0, left = 0;
+    if (imageAspectRatio > containerAspectRatio) {
+      width = containerWidth;
+      height = containerWidth / imageAspectRatio;
+      top = (containerHeight - height) / 2;
+    } else {
+      height = containerHeight;
+      width = containerHeight * imageAspectRatio;
+      left = (containerWidth - width) / 2;
+    }
+    setDisplaySize({ width, height, top, left });
+  }, [dimensions]);
+
   useEffect(() => {
-    const calculateDisplaySize = () => {
-        if (!dimensions || !containerRef.current || !imageRef.current) {
-            // If we don't have an image yet, try to get container dimensions for placeholder
-            if (containerRef.current) {
-                const { offsetWidth, offsetHeight } = containerRef.current;
-                 if (!offsetWidth || !offsetHeight) return;
-                const imageAspectRatio = dimensions ? dimensions.width / dimensions.height : 16/9;
-                const containerAspectRatio = offsetWidth / offsetHeight;
-
-                let width, height, top = 0, left = 0;
-                if (imageAspectRatio > containerAspectRatio) {
-                    width = offsetWidth;
-                    height = offsetWidth / imageAspectRatio;
-                    top = (offsetHeight - height) / 2;
-                } else {
-                    height = offsetHeight;
-                    width = offsetHeight * imageAspectRatio;
-                    left = (offsetWidth - width) / 2;
-                }
-                setDisplaySize({ width, height, top, left });
-            }
-            return;
-        };
-
-        const { naturalWidth, naturalHeight } = imageRef.current.closest('img') || { naturalWidth: dimensions.width, naturalHeight: dimensions.height };
-        const { offsetWidth: containerWidth, offsetHeight: containerHeight } = containerRef.current;
-      
-        if (containerHeight === 0 || containerWidth === 0) return;
-
-        const imageAspectRatio = naturalWidth / naturalHeight;
-        const containerAspectRatio = containerWidth / containerHeight;
-
-        let width, height, top = 0, left = 0;
-        if (imageAspectRatio > containerAspectRatio) {
-            width = containerWidth;
-            height = containerWidth / imageAspectRatio;
-            top = (containerHeight - height) / 2;
-        } else {
-            height = containerHeight;
-            width = containerHeight * imageAspectRatio;
-            left = (containerWidth - width) / 2;
-        }
-        setDisplaySize({ width, height, top, left });
-    };
-
+    calculateDisplaySize();
     const resizeObserver = new ResizeObserver(() => calculateDisplaySize());
     if (containerRef.current) {
         resizeObserver.observe(containerRef.current);
     }
-
-    // A small delay to ensure imageRef is available after image loads
-    const imgElement = imageRef.current;
-    if (imgElement) {
-        imgElement.addEventListener('load', calculateDisplaySize);
-    }
-    
-    calculateDisplaySize(); // Initial calculation
-
     return () => {
         if(containerRef.current) {
             resizeObserver.unobserve(containerRef.current);
         }
-         if (imgElement) {
-            imgElement.removeEventListener('load', calculateDisplaySize);
-        }
     };
+  }, [calculateDisplaySize, imageUrl]);
 
-  }, [dimensions]);
 
   const getPointPosition = (point: Point) => {
     if (!dimensions || !displaySize.width || !displaySize.height) return { left: 0, top: 0 };
@@ -119,24 +92,19 @@ export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, i
   };
 
   const handleContainerClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!dimensions || !containerRef.current) return;
+    if (!dimensions || !displaySize.width || !displaySize.height) return;
     
-    const rect = containerRef.current.getBoundingClientRect();
-    // Get click position relative to the container
+    const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    // Check if the click is within the scaled image bounds
     if (x < displaySize.left || x > displaySize.left + displaySize.width ||
         y < displaySize.top || y > displaySize.top + displaySize.height) {
-      return; // Click was outside the image
+      return; 
     }
 
-    // Scale click position relative to the image, not the container
     const imageX = x - displaySize.left;
     const imageY = y - displaySize.top;
-
-    // Scale click position to original image dimensions
     const originalX = (imageX / displaySize.width) * dimensions.width;
     const originalY = (imageY / displaySize.height) * dimensions.height;
 
@@ -157,7 +125,7 @@ export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, i
     >
       {imageUrl && (
         <div style={{ position: 'absolute', top: displaySize.top, left: displaySize.left, width: displaySize.width, height: displaySize.height }}>
-            <Image ref={imageRef} src={imageUrl} alt="Uploaded image" layout="fill" objectFit="contain" />
+            <Image src={imageUrl} alt="Uploaded image" layout="fill" objectFit="contain" onLoadingComplete={calculateDisplaySize} />
         </div>
       )}
       {!imageUrl && <p className="text-muted-foreground">Upload an image to begin</p>}

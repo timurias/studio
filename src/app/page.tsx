@@ -1,3 +1,9 @@
+import HomoVisionClient from "@/components/homovision-client";
+
 export default function Home() {
-  return <></>;
+  return (
+    <main className="min-h-screen container mx-auto p-4 md:p-8">
+      <HomoVisionClient />
+    </main>
+  );
 }

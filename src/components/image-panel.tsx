@@ -27,8 +27,11 @@ export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, i
     const calculateDisplaySize = () => {
       if (!dimensions || !containerRef.current) return;
       
-      const containerWidth = containerRef.current.clientWidth;
-      const containerHeight = containerRef.current.clientHeight;
+      const containerWidth = containerRef.current.offsetWidth;
+      const containerHeight = containerRef.current.offsetHeight;
+
+      if (containerHeight === 0 || containerWidth === 0) return;
+
       const imageAspectRatio = dimensions.width / dimensions.height;
       const containerAspectRatio = containerWidth / containerHeight;
 
@@ -45,14 +48,23 @@ export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, i
       setDisplaySize({ width, height, top, left });
     };
 
-    calculateDisplaySize();
-    window.addEventListener('resize', calculateDisplaySize);
-    return () => window.removeEventListener('resize', calculateDisplaySize);
+    const resizeObserver = new ResizeObserver(() => calculateDisplaySize());
+    if (containerRef.current) {
+        resizeObserver.observe(containerRef.current);
+    }
+    
+    calculateDisplaySize(); // Initial calculation
+
+    return () => {
+        if(containerRef.current) {
+            resizeObserver.unobserve(containerRef.current);
+        }
+    };
 
   }, [dimensions]);
 
   const getPointPosition = (point: Point) => {
-    if (!dimensions) return { left: 0, top: 0 };
+    if (!dimensions || !displaySize.width || !displaySize.height) return { left: 0, top: 0 };
     const left = (point.x / dimensions.width) * displaySize.width + displaySize.left;
     const top = (point.y / dimensions.height) * displaySize.height + displaySize.top;
     return { left, top };
@@ -113,10 +125,12 @@ export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, i
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
     >
-      {imageUrl ? (
-        <Image ref={imageRef} src={imageUrl} alt="Uploaded image" layout="fill" objectFit="contain" />
+      {imageUrl && displaySize.width > 0 ? (
+        <div style={{ position: 'absolute', top: displaySize.top, left: displaySize.left, width: displaySize.width, height: displaySize.height }}>
+            <Image ref={imageRef} src={imageUrl} alt="Uploaded image" layout="fill" objectFit="contain" />
+        </div>
       ) : (
-        <p className="text-muted-foreground">Upload an image to begin</p>
+        !imageUrl && <p className="text-muted-foreground">Upload an image to begin</p>
       )}
 
       {imageUrl && points.map((point, index) => {
@@ -145,7 +159,7 @@ export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, i
         );
       })}
 
-      {mousePos && imageUrl && dimensions && (
+      {mousePos && imageUrl && dimensions && displaySize.width > 0 && (
         <div
           className="absolute pointer-events-none rounded-full border-2 border-primary bg-background shadow-lg"
           style={{
@@ -177,5 +191,3 @@ export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, i
     </div>
   );
 }
-
-    

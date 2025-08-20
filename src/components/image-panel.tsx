@@ -2,7 +2,7 @@
 "use client";
 
 import type { Point } from "@/lib/homography";
-import { useRef, useState, useEffect, useCallback } from "react";
+import { useRef, useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import Image from "next/image";
 
@@ -21,6 +21,15 @@ export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, i
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
+  const [loupeImageSrc, setLoupeImageSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    // When the imageRef is available (after render), get its src for the loupe
+    if (imageRef.current?.src) {
+        setLoupeImageSrc(imageRef.current.src);
+    }
+  }, [imageUrl, imageRef.current]);
+
 
   const getPointPosition = (point: Point) => {
     const image = imageRef.current;
@@ -102,6 +111,8 @@ export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, i
             alt="Uploaded image" 
             width={dimensions.width}
             height={dimensions.height}
+            priority={true} // Eagerly load the image
+            onLoad={(e) => setLoupeImageSrc(e.currentTarget.src)}
             className="w-full h-full object-contain"
           />
         </div>
@@ -133,7 +144,7 @@ export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, i
         );
       })}
 
-      {mousePos && imageUrl && dimensions && imageRef.current && (
+      {mousePos && loupeImageSrc && dimensions && imageRef.current && (
         <div
           className="absolute pointer-events-none rounded-full border-2 border-primary bg-background shadow-lg"
           style={{
@@ -151,7 +162,7 @@ export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, i
               height: imageRef.current.getBoundingClientRect().height * ZOOM_FACTOR,
               left: `-${(mousePos.x - (imageRef.current.getBoundingClientRect().left - containerRef.current!.getBoundingClientRect().left)) * ZOOM_FACTOR - LOUPE_SIZE / 2}px`,
               top: `-${(mousePos.y - (imageRef.current.getBoundingClientRect().top - containerRef.current!.getBoundingClientRect().top)) * ZOOM_FACTOR - LOUPE_SIZE / 2}px`,
-              backgroundImage: `url(${imageUrl})`,
+              backgroundImage: `url(${loupeImageSrc})`,
               backgroundSize: 'cover',
             }}
           />

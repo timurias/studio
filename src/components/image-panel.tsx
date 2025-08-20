@@ -25,32 +25,59 @@ export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, i
 
   useEffect(() => {
     const calculateDisplaySize = () => {
-      if (!dimensions || !containerRef.current) return;
+        if (!dimensions || !containerRef.current || !imageRef.current) {
+            // If we don't have an image yet, try to get container dimensions for placeholder
+            if (containerRef.current) {
+                const { offsetWidth, offsetHeight } = containerRef.current;
+                 if (!offsetWidth || !offsetHeight) return;
+                const imageAspectRatio = dimensions ? dimensions.width / dimensions.height : 16/9;
+                const containerAspectRatio = offsetWidth / offsetHeight;
+
+                let width, height, top = 0, left = 0;
+                if (imageAspectRatio > containerAspectRatio) {
+                    width = offsetWidth;
+                    height = offsetWidth / imageAspectRatio;
+                    top = (offsetHeight - height) / 2;
+                } else {
+                    height = offsetHeight;
+                    width = offsetHeight * imageAspectRatio;
+                    left = (offsetWidth - width) / 2;
+                }
+                setDisplaySize({ width, height, top, left });
+            }
+            return;
+        };
+
+        const { naturalWidth, naturalHeight } = imageRef.current.closest('img') || { naturalWidth: dimensions.width, naturalHeight: dimensions.height };
+        const { offsetWidth: containerWidth, offsetHeight: containerHeight } = containerRef.current;
       
-      const containerWidth = containerRef.current.offsetWidth;
-      const containerHeight = containerRef.current.offsetHeight;
+        if (containerHeight === 0 || containerWidth === 0) return;
 
-      if (containerHeight === 0 || containerWidth === 0) return;
+        const imageAspectRatio = naturalWidth / naturalHeight;
+        const containerAspectRatio = containerWidth / containerHeight;
 
-      const imageAspectRatio = dimensions.width / dimensions.height;
-      const containerAspectRatio = containerWidth / containerHeight;
-
-      let width, height, top = 0, left = 0;
-      if (imageAspectRatio > containerAspectRatio) {
-        width = containerWidth;
-        height = containerWidth / imageAspectRatio;
-        top = (containerHeight - height) / 2;
-      } else {
-        height = containerHeight;
-        width = containerHeight * imageAspectRatio;
-        left = (containerWidth - width) / 2;
-      }
-      setDisplaySize({ width, height, top, left });
+        let width, height, top = 0, left = 0;
+        if (imageAspectRatio > containerAspectRatio) {
+            width = containerWidth;
+            height = containerWidth / imageAspectRatio;
+            top = (containerHeight - height) / 2;
+        } else {
+            height = containerHeight;
+            width = containerHeight * imageAspectRatio;
+            left = (containerWidth - width) / 2;
+        }
+        setDisplaySize({ width, height, top, left });
     };
 
     const resizeObserver = new ResizeObserver(() => calculateDisplaySize());
     if (containerRef.current) {
         resizeObserver.observe(containerRef.current);
+    }
+
+    // A small delay to ensure imageRef is available after image loads
+    const imgElement = imageRef.current;
+    if (imgElement) {
+        imgElement.addEventListener('load', calculateDisplaySize);
     }
     
     calculateDisplaySize(); // Initial calculation
@@ -58,6 +85,9 @@ export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, i
     return () => {
         if(containerRef.current) {
             resizeObserver.unobserve(containerRef.current);
+        }
+         if (imgElement) {
+            imgElement.removeEventListener('load', calculateDisplaySize);
         }
     };
 
@@ -125,13 +155,13 @@ export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, i
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
     >
-      {imageUrl && displaySize.width > 0 ? (
+      {imageUrl && (
         <div style={{ position: 'absolute', top: displaySize.top, left: displaySize.left, width: displaySize.width, height: displaySize.height }}>
             <Image ref={imageRef} src={imageUrl} alt="Uploaded image" layout="fill" objectFit="contain" />
         </div>
-      ) : (
-        !imageUrl && <p className="text-muted-foreground">Upload an image to begin</p>
       )}
+      {!imageUrl && <p className="text-muted-foreground">Upload an image to begin</p>}
+
 
       {imageUrl && points.map((point, index) => {
         if (!dimensions) return null;

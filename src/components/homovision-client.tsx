@@ -110,6 +110,10 @@ export default function HomoVisionClient() {
       toast({ variant: 'destructive', title: 'Error', description: 'At least 4 pairs of points are required.' });
       return;
     }
+    if (points1.length !== points2.length) {
+      toast({ variant: 'destructive', title: 'Error', description: 'The number of points on both images must be equal.'});
+      return;
+    }
     setIsCalculating(true);
     setTimeout(() => {
         const matrix = calculateHomography(points1, points2);
@@ -163,8 +167,8 @@ export default function HomoVisionClient() {
             return;
         }
 
-        const transformedSourceData = ctx.createImageData(destWidth, destHeight);
-        const transformedData = transformedSourceData.data;
+        const transformedImageData = ctx.createImageData(destWidth, destHeight);
+        const transformedData = transformedImageData.data;
 
         for (let y = 0; y < destHeight; y++) {
             for (let x = 0; x < destWidth; x++) {
@@ -208,7 +212,7 @@ export default function HomoVisionClient() {
         ctx.beginPath();
         ctx.rect(0, 0, splitPixelX, splitPixelY);
         ctx.clip();
-        ctx.putImageData(transformedSourceData, 0, 0);
+        ctx.putImageData(transformedImageData, 0, 0);
         ctx.restore();
 
         // 4. Draw split lines
@@ -380,9 +384,11 @@ export default function HomoVisionClient() {
           <CardHeader>
             <CardTitle>Transformed Image Preview</CardTitle>
           </CardHeader>
-          <CardContent className="flex flex-col items-center justify-center gap-4">
-            <canvas ref={previewCanvasRef} className="max-w-full h-auto rounded-md bg-muted/20" />
-            {!homographyMatrix && <div className="absolute text-muted-foreground">Preview will appear here.</div>}
+          <CardContent className="relative flex flex-col items-center justify-center gap-4">
+             <div className="relative w-full" style={image2.dimensions ? { aspectRatio: `${image2.dimensions.width} / ${image2.dimensions.height}` } : {aspectRatio: '16 / 9'}}>
+                <canvas ref={previewCanvasRef} className="absolute inset-0 w-full h-full rounded-md bg-muted/20" />
+                {!homographyMatrix && <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">Preview will appear here.</div>}
+            </div>
             {homographyMatrix && (
               <div className="w-full grid grid-cols-[auto_1fr] items-center gap-4 px-2">
                   <Label htmlFor="split-x" className="font-mono">X:</Label>
@@ -413,3 +419,5 @@ export default function HomoVisionClient() {
     </div>
   );
 }
+
+    

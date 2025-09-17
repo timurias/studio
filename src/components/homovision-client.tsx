@@ -39,6 +39,8 @@ export default function HomoVisionClient() {
   const [splitX, setSplitX] = useState(50);
   const [splitY, setSplitY] = useState(50);
 
+  console.log("Hello, TypeScript!");
+
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const { toast } = useToast();
 
@@ -52,6 +54,7 @@ export default function HomoVisionClient() {
   
   // Redraw canvas when sliders or matrix change
   useEffect(() => {
+    console.log("Hello, use effect!");
     if (homographyMatrix && image1.url && image2.url) {
       drawTransformedImage(homographyMatrix);
     }
@@ -130,6 +133,7 @@ export default function HomoVisionClient() {
   const drawTransformedImage = (matrix: number[][]) => {
     const canvas = previewCanvasRef.current;
     if (!canvas || !image1.url || !image2.url || !image1.dimensions || !image2.dimensions) return;
+
 
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return;

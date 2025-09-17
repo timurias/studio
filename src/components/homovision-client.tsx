@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useRef, useEffect, type ChangeEvent } from "react";
@@ -12,6 +13,7 @@ import { invert3x3, multiplyMatrixVector } from "@/lib/matrix";
 import { autoDetectPoints } from "@/ai/flows/auto-detect-points";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Upload, Trash2, Calculator, Sparkles, RotateCcw } from "lucide-react";
+import { Slider } from "@/components/ui/slider";
 
 type ImageState = {
   file: File | null;
@@ -34,6 +36,8 @@ export default function HomoVisionClient() {
   const [isCalculating, setIsCalculating] = useState(false);
   const [isAiDetecting, setIsAiDetecting] = useState(false);
   const [nextImageToMark, setNextImageToMark] = useState<1 | 2>(1);
+  const [splitX, setSplitX] = useState(50);
+  const [splitY, setSplitY] = useState(50);
 
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const { toast } = useToast();
@@ -45,6 +49,14 @@ export default function HomoVisionClient() {
       if (image2.url) URL.revokeObjectURL(image2.url);
     };
   }, [image1.url, image2.url]);
+  
+  // Redraw canvas when sliders or matrix change
+  useEffect(() => {
+    if (homographyMatrix) {
+      drawTransformedImage(homographyMatrix);
+    }
+  }, [splitX, splitY, homographyMatrix, image1, image2]);
+
 
   const handleImageUpload = (e: ChangeEvent<HTMLInputElement>, imageNumber: 1 | 2) => {
     const file = e.target.files?.[0];
@@ -82,14 +94,15 @@ export default function HomoVisionClient() {
   };
 
   const clearLastPointPair = () => {
-    if (nextImageToMark === 1) { // A full pair has been added
+    if (points1.length === 0) return;
+    if (nextImageToMark === 1) { // A full pair has been added or points were auto-detected
       setPoints1(points1.slice(0, -1));
       setPoints2(points2.slice(0, -1));
     } else { // Only the first point of a pair has been added
       setPoints1(points1.slice(0, -1));
       setNextImageToMark(1);
     }
-    toast({ title: "Last point removed", description: "The last point or point pair has been cleared." });
+    toast({ title: "Last point pair removed", description: "The last point pair has been cleared." });
   };
 
   const handleCalculateHomography = () => {
@@ -112,60 +125,96 @@ export default function HomoVisionClient() {
   };
   
   const drawTransformedImage = (matrix: number[][]) => {
-    if (!image1.file || !image2.dimensions || !previewCanvasRef.current) return;
+    if (!image1.file || !image2.file || !image2.dimensions || !previewCanvasRef.current) return;
 
     const sourceImage = new Image();
-    sourceImage.src = URL.createObjectURL(image1.file);
-    sourceImage.onload = () => {
-      const destWidth = image2.dimensions!.width;
-      const destHeight = image2.dimensions!.height;
-      const canvas = previewCanvasRef.current!;
-      canvas.width = destWidth;
-      canvas.height = destHeight;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) return;
-  
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = sourceImage.width;
-      tempCanvas.height = sourceImage.height;
-      const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
-      if (!tempCtx) return;
-      tempCtx.drawImage(sourceImage, 0, 0);
-      const sourceImageData = tempCtx.getImageData(0, 0, sourceImage.width, sourceImage.height);
-      const sourceData = sourceImageData.data;
-  
-      const invMatrix = invert3x3(matrix);
-      if (!invMatrix) {
-          toast({ variant: "destructive", title: "Error", description: "Matrix is not invertible." });
-          return;
-      }
-      
-      const destImageData = ctx.createImageData(destWidth, destHeight);
-      const destData = destImageData.data;
+    sourceImage.src = image1.url!;
+    const destImage = new Image();
+    destImage.src = image2.url!;
+    
+    destImage.onload = () => {
+        sourceImage.onload = () => {
+            const destWidth = image2.dimensions!.width;
+            const destHeight = image2.dimensions!.height;
+            const canvas = previewCanvasRef.current!;
+            canvas.width = destWidth;
+            canvas.height = destHeight;
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            if (!ctx) return;
+        
+            // 1. Draw destination image as the base
+            ctx.drawImage(destImage, 0, 0, destWidth, destHeight);
 
-      for (let y = 0; y < destHeight; y++) {
-        for (let x = 0; x < destWidth; x++) {
-          const destVec = [x, y, 1];
-          const sourceVec = multiplyMatrixVector(invMatrix, destVec);
-          
-          const sx = sourceVec[0] / sourceVec[2];
-          const sy = sourceVec[1] / sourceVec[2];
-
-          if (sx >= 0 && sx < sourceImage.width && sy >= 0 && sy < sourceImage.height) {
-            const floor_sx = Math.floor(sx);
-            const floor_sy = Math.floor(sy);
+            // 2. Prepare transformed source image data
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = sourceImage.width;
+            tempCanvas.height = sourceImage.height;
+            const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+            if (!tempCtx) return;
+            tempCtx.drawImage(sourceImage, 0, 0);
+            const sourceImageData = tempCtx.getImageData(0, 0, sourceImage.width, sourceImage.height);
+            const sourceData = sourceImageData.data;
+        
+            const invMatrix = invert3x3(matrix);
+            if (!invMatrix) {
+                toast({ variant: "destructive", title: "Error", description: "Matrix is not invertible." });
+                return;
+            }
             
-            const sourceIndex = (floor_sy * sourceImage.width + floor_sx) * 4;
-            const destIndex = (y * destWidth + x) * 4;
+            const transformedSourceData = ctx.createImageData(destWidth, destHeight);
+            const transformedData = transformedSourceData.data;
 
-            destData[destIndex] = sourceData[sourceIndex];
-            destData[destIndex + 1] = sourceData[sourceIndex + 1];
-            destData[destIndex + 2] = sourceData[sourceIndex + 2];
-            destData[destIndex + 3] = sourceData[sourceIndex + 3];
-          }
+            for (let y = 0; y < destHeight; y++) {
+                for (let x = 0; x < destWidth; x++) {
+                    const destVec = [x, y, 1];
+                    const sourceVec = multiplyMatrixVector(invMatrix, destVec);
+                    
+                    const sx = sourceVec[0] / sourceVec[2];
+                    const sy = sourceVec[1] / sourceVec[2];
+
+                    if (sx >= 0 && sx < sourceImage.width && sy >= 0 && sy < sourceImage.height) {
+                        const floor_sx = Math.floor(sx);
+                        const floor_sy = Math.floor(sy);
+                        
+                        const sourceIndex = (floor_sy * sourceImage.width + floor_sx) * 4;
+                        const destIndex = (y * destWidth + x) * 4;
+
+                        transformedData[destIndex] = sourceData[sourceIndex];
+                        transformedData[destIndex + 1] = sourceData[sourceIndex + 1];
+                        transformedData[destIndex + 2] = sourceData[sourceIndex + 2];
+                        transformedData[destIndex + 3] = sourceData[sourceIndex + 3];
+                    }
+                }
+            }
+
+            // 3. Draw the transformed source image on top, clipped by the sliders
+            const splitPixelX = (splitX / 100) * destWidth;
+            const splitPixelY = (splitY / 100) * destHeight;
+            
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(0, 0, splitPixelX, splitPixelY);
+            ctx.clip();
+            ctx.putImageData(transformedSourceData, 0, 0);
+            ctx.restore();
+            
+            // 4. Draw split lines
+            ctx.save();
+            ctx.strokeStyle = "hsl(var(--primary))";
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5, 5]);
+            // Vertical line
+            ctx.beginPath();
+            ctx.moveTo(splitPixelX, 0);
+            ctx.lineTo(splitPixelX, destHeight);
+            ctx.stroke();
+            // Horizontal line
+            ctx.beginPath();
+            ctx.moveTo(0, splitPixelY);
+            ctx.lineTo(destWidth, splitPixelY);
+            ctx.stroke();
+            ctx.restore();
         }
-      }
-      ctx.putImageData(destImageData, 0, 0);
     }
   };
 
@@ -214,6 +263,8 @@ export default function HomoVisionClient() {
     setPoints2([]);
     setHomographyMatrix(null);
     setNextImageToMark(1);
+    setSplitX(50);
+    setSplitY(50);
     if (previewCanvasRef.current) {
       const ctx = previewCanvasRef.current.getContext('2d');
       ctx?.clearRect(0, 0, previewCanvasRef.current.width, previewCanvasRef.current.height);
@@ -302,10 +353,20 @@ export default function HomoVisionClient() {
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle>Transformed Image Preview</CardTitle></CardHeader>
-          <CardContent className="flex items-center justify-center">
+          <CardHeader>
+            <CardTitle>Transformed Image Preview</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col items-center justify-center gap-4">
             <canvas ref={previewCanvasRef} className="max-w-full h-auto rounded-md bg-muted/20" />
             {!homographyMatrix && <div className="absolute text-muted-foreground">Preview will appear here.</div>}
+            {homographyMatrix && (
+              <div className="w-full grid grid-cols-[auto_1fr] items-center gap-4 px-2">
+                  <Label htmlFor="split-x" className="font-mono">X:</Label>
+                  <Slider id="split-x" value={[splitX]} onValueChange={([val]) => setSplitX(val)} max={100} step={1} />
+                  <Label htmlFor="split-y" className="font-mono">Y:</Label>
+                  <Slider id="split-y" value={[splitY]} onValueChange={([val]) => setSplitY(val)} max={100} step={1} />
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -328,3 +389,5 @@ export default function HomoVisionClient() {
     </div>
   );
 }
+
+    

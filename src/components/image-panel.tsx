@@ -176,3 +176,5 @@ export default function ImagePanel({ imageUrl, points, onPointAdd, dimensions, i
     </div>
   );
 }
+
+    

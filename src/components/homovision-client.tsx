@@ -52,10 +52,10 @@ export default function HomoVisionClient() {
   
   // Redraw canvas when sliders or matrix change
   useEffect(() => {
-    if (homographyMatrix) {
+    if (homographyMatrix && image1.url && image2.url) {
       drawTransformedImage(homographyMatrix);
     }
-  }, [splitX, splitY, homographyMatrix, image1, image2]);
+  }, [splitX, splitY, homographyMatrix, image1.url, image2.url]);
 
 
   const handleImageUpload = (e: ChangeEvent<HTMLInputElement>, imageNumber: 1 | 2) => {
@@ -116,7 +116,6 @@ export default function HomoVisionClient() {
         setHomographyMatrix(matrix);
         if (matrix) {
             toast({ title: "Success", description: "Homography matrix calculated." });
-            drawTransformedImage(matrix);
         } else {
             toast({ variant: 'destructive', title: 'Error', description: 'Could not calculate homography. Ensure points are not collinear.' });
         }
@@ -125,97 +124,122 @@ export default function HomoVisionClient() {
   };
   
   const drawTransformedImage = (matrix: number[][]) => {
-    if (!image1.file || !image2.file || !image2.dimensions || !previewCanvasRef.current) return;
+    const canvas = previewCanvasRef.current;
+    if (!canvas || !image1.url || !image2.url || !image1.dimensions || !image2.dimensions) return;
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return;
+
+    const destWidth = image2.dimensions.width;
+    const destHeight = image2.dimensions.height;
+    canvas.width = destWidth;
+    canvas.height = destHeight;
 
     const sourceImage = new Image();
-    sourceImage.src = image1.url!;
     const destImage = new Image();
-    destImage.src = image2.url!;
-    
-    destImage.onload = () => {
-        sourceImage.onload = () => {
-            const destWidth = image2.dimensions!.width;
-            const destHeight = image2.dimensions!.height;
-            const canvas = previewCanvasRef.current!;
-            canvas.width = destWidth;
-            canvas.height = destHeight;
-            const ctx = canvas.getContext('2d', { willReadFrequently: true });
-            if (!ctx) return;
-        
-            // 1. Draw destination image as the base
-            ctx.drawImage(destImage, 0, 0, destWidth, destHeight);
 
-            // 2. Prepare transformed source image data
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = sourceImage.width;
-            tempCanvas.height = sourceImage.height;
-            const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
-            if (!tempCtx) return;
-            tempCtx.drawImage(sourceImage, 0, 0);
-            const sourceImageData = tempCtx.getImageData(0, 0, sourceImage.width, sourceImage.height);
-            const sourceData = sourceImageData.data;
-        
-            const invMatrix = invert3x3(matrix);
-            if (!invMatrix) {
-                toast({ variant: "destructive", title: "Error", description: "Matrix is not invertible." });
-                return;
-            }
-            
-            const transformedSourceData = ctx.createImageData(destWidth, destHeight);
-            const transformedData = transformedSourceData.data;
+    let sourceLoaded = false;
+    let destLoaded = false;
 
-            for (let y = 0; y < destHeight; y++) {
-                for (let x = 0; x < destWidth; x++) {
-                    const destVec = [x, y, 1];
-                    const sourceVec = multiplyMatrixVector(invMatrix, destVec);
+    const onImagesLoaded = () => {
+        if (!sourceLoaded || !destLoaded) return;
+
+        // 1. Draw destination image as the base
+        ctx.drawImage(destImage, 0, 0, destWidth, destHeight);
+
+        // 2. Prepare transformed source image data
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = sourceImage.width;
+        tempCanvas.height = sourceImage.height;
+        const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+        if (!tempCtx) return;
+        tempCtx.drawImage(sourceImage, 0, 0);
+        const sourceImageData = tempCtx.getImageData(0, 0, sourceImage.width, sourceImage.height);
+        const sourceData = sourceImageData.data;
+
+        const invMatrix = invert3x3(matrix);
+        if (!invMatrix) {
+            toast({ variant: "destructive", title: "Error", description: "Matrix is not invertible." });
+            return;
+        }
+
+        const transformedSourceData = ctx.createImageData(destWidth, destHeight);
+        const transformedData = transformedSourceData.data;
+
+        for (let y = 0; y < destHeight; y++) {
+            for (let x = 0; x < destWidth; x++) {
+                const destVec = [x, y, 1];
+                const sourceVec = multiplyMatrixVector(invMatrix, destVec);
+
+                const sx = sourceVec[0] / sourceVec[2];
+                const sy = sourceVec[1] / sourceVec[2];
+
+                if (sx >= 0 && sx < sourceImage.width && sy >= 0 && sy < sourceImage.height) {
+                    // Using bilinear interpolation for smoother results
+                    const x_floor = Math.floor(sx);
+                    const y_floor = Math.floor(sy);
+                    const x_ceil = Math.min(sourceImage.width - 1, x_floor + 1);
+                    const y_ceil = Math.min(sourceImage.height - 1, y_floor + 1);
+
+                    const tx = sx - x_floor;
+                    const ty = sy - y_floor;
+
+                    const q11_index = (y_floor * sourceImage.width + x_floor) * 4;
+                    const q21_index = (y_floor * sourceImage.width + x_ceil) * 4;
+                    const q12_index = (y_ceil * sourceImage.width + x_floor) * 4;
+                    const q22_index = (y_ceil * sourceImage.width + x_ceil) * 4;
                     
-                    const sx = sourceVec[0] / sourceVec[2];
-                    const sy = sourceVec[1] / sourceVec[2];
+                    const destIndex = (y * destWidth + x) * 4;
 
-                    if (sx >= 0 && sx < sourceImage.width && sy >= 0 && sy < sourceImage.height) {
-                        const floor_sx = Math.floor(sx);
-                        const floor_sy = Math.floor(sy);
-                        
-                        const sourceIndex = (floor_sy * sourceImage.width + floor_sx) * 4;
-                        const destIndex = (y * destWidth + x) * 4;
-
-                        transformedData[destIndex] = sourceData[sourceIndex];
-                        transformedData[destIndex + 1] = sourceData[sourceIndex + 1];
-                        transformedData[destIndex + 2] = sourceData[sourceIndex + 2];
-                        transformedData[destIndex + 3] = sourceData[sourceIndex + 3];
+                    for (let c = 0; c < 4; c++) { // Iterate over R, G, B, A
+                        const b1 = sourceData[q11_index + c] * (1 - tx) + sourceData[q21_index + c] * tx;
+                        const b2 = sourceData[q12_index + c] * (1 - tx) + sourceData[q22_index + c] * tx;
+                        transformedData[destIndex + c] = b1 * (1 - ty) + b2 * ty;
                     }
                 }
             }
-
-            // 3. Draw the transformed source image on top, clipped by the sliders
-            const splitPixelX = (splitX / 100) * destWidth;
-            const splitPixelY = (splitY / 100) * destHeight;
-            
-            ctx.save();
-            ctx.beginPath();
-            ctx.rect(0, 0, splitPixelX, splitPixelY);
-            ctx.clip();
-            ctx.putImageData(transformedSourceData, 0, 0);
-            ctx.restore();
-            
-            // 4. Draw split lines
-            ctx.save();
-            ctx.strokeStyle = "hsl(var(--primary))";
-            ctx.lineWidth = 1;
-            ctx.setLineDash([5, 5]);
-            // Vertical line
-            ctx.beginPath();
-            ctx.moveTo(splitPixelX, 0);
-            ctx.lineTo(splitPixelX, destHeight);
-            ctx.stroke();
-            // Horizontal line
-            ctx.beginPath();
-            ctx.moveTo(0, splitPixelY);
-            ctx.lineTo(destWidth, splitPixelY);
-            ctx.stroke();
-            ctx.restore();
         }
-    }
+        
+        // 3. Draw the transformed source image on top, clipped by the sliders
+        const splitPixelX = (splitX / 100) * destWidth;
+        const splitPixelY = (splitY / 100) * destHeight;
+        
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, splitPixelX, splitPixelY);
+        ctx.clip();
+        ctx.putImageData(transformedSourceData, 0, 0);
+        ctx.restore();
+
+        // 4. Draw split lines
+        ctx.save();
+        ctx.strokeStyle = "hsl(var(--primary))";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([5, 5]);
+        // Vertical line
+        ctx.beginPath();
+        ctx.moveTo(splitPixelX, 0);
+        ctx.lineTo(splitPixelX, destHeight);
+        ctx.stroke();
+        // Horizontal line
+        ctx.beginPath();
+        ctx.moveTo(0, splitPixelY);
+        ctx.lineTo(destWidth, splitPixelY);
+        ctx.stroke();
+        ctx.restore();
+    };
+
+    sourceImage.onload = () => {
+        sourceLoaded = true;
+        onImagesLoaded();
+    };
+    destImage.onload = () => {
+        destLoaded = true;
+        onImagesLoaded();
+    };
+
+    sourceImage.src = image1.url!;
+    destImage.src = image2.url!;
   };
 
   const fileToDataUri = (file: File): Promise<string> => {
@@ -389,5 +413,3 @@ export default function HomoVisionClient() {
     </div>
   );
 }
-
-    
